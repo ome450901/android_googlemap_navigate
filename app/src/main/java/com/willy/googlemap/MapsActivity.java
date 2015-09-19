@@ -1,15 +1,25 @@
 package com.willy.googlemap;
 
+import android.app.Activity;
+import android.content.Intent;
 import android.location.Location;
 import android.os.Bundle;
 import android.support.v4.app.FragmentActivity;
+import android.view.View;
+import android.widget.AutoCompleteTextView;
+import android.widget.Button;
 import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GooglePlayServicesNotAvailableException;
+import com.google.android.gms.common.GooglePlayServicesRepairableException;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.places.Place;
+import com.google.android.gms.location.places.Places;
+import com.google.android.gms.location.places.ui.PlacePicker;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.SupportMapFragment;
@@ -17,16 +27,26 @@ import com.google.android.gms.maps.model.BitmapDescriptor;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.willy.googlemap.adapter.PlaceAutocompleteAdapter;
+import com.willy.googlemap.task.RouteTask;
 
 public class MapsActivity extends FragmentActivity implements GoogleApiClient.ConnectionCallbacks,
         GoogleApiClient.OnConnectionFailedListener, LocationListener{
 
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
 
-    private String directionApiCall = "https://maps.googleapis.com/maps/api/directions/json?";
+    private static final int PLACE_PICKER_REQUEST = 1;
 
+    private static final LatLngBounds BOUNDS_MOUNTAIN_VIEW = new LatLngBounds(
+            new LatLng(37.398160, -122.180831), new LatLng(37.430610, -121.972090));
+
+    /**
+     * GoogleApiClient wraps our service connection to Google Play Services and provides access
+     * to the user's sign in state as well as the Google's APIs.
+     */
     // Google API用戶端物件
     private GoogleApiClient googleApiClient;
 
@@ -38,6 +58,18 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
 
     // 顯示目前與儲存位置的標記物件
     private Marker currentMarker, itemMarker;
+
+    private PlaceAutocompleteAdapter mAdapter;
+
+    private AutoCompleteTextView mAutocompleteView;
+
+    private AutoCompleteTextView editFrom;
+    private AutoCompleteTextView editTo;
+    private Button btnGo;
+    private Button pickerButton;
+
+    private static final LatLngBounds BOUNDS_GREATER_SYDNEY = new LatLngBounds(
+            new LatLng(22, 120), new LatLng(25, 122));
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,6 +85,69 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
 
         // Enable MyLocation Button in the Map
         mMap.setMyLocationEnabled(true);
+
+        // Register a listener that receives callbacks when a suggestion has been selected
+//        mAutocompleteView.setOnItemClickListener(mAutocompleteClickListener);
+        // Set up the adapter that will retrieve suggestions from the Places Geo Data API that cover
+        // the entire world.
+        mAdapter = new PlaceAutocompleteAdapter(this, android.R.layout.simple_list_item_1,
+                googleApiClient, BOUNDS_GREATER_SYDNEY, null);
+
+        editFrom = (AutoCompleteTextView) findViewById(R.id.autocomplete_places_from);
+        editFrom.setAdapter(mAdapter);
+        editTo = (AutoCompleteTextView) findViewById(R.id.autocomplete_places_to);
+        editTo.setAdapter(mAdapter);
+        btnGo = (Button) findViewById(R.id.btnGo);
+        btnGo.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(final View v) {
+                if ("".equals(editFrom.getText().toString().trim())) {
+                    Toast.makeText(MapsActivity.this, "Enter the starting point", Toast.LENGTH_SHORT).show();
+                } else if ("".equals(editTo.getText().toString().trim())) {
+                    Toast.makeText(MapsActivity.this, "Enter the destination point", Toast.LENGTH_SHORT).show();
+                } else {
+                    new RouteTask(MapsActivity.this, mMap, editFrom.getText().toString().trim(), editTo.getText().toString().trim()).execute();
+                }
+            }
+        });
+
+        pickerButton = (Button) findViewById(R.id.pickerButton);
+        pickerButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                try {
+                    PlacePicker.IntentBuilder intentBuilder =
+                            new PlacePicker.IntentBuilder();
+                    intentBuilder.setLatLngBounds(BOUNDS_MOUNTAIN_VIEW);
+                    Intent intent = intentBuilder.build(getApplicationContext());
+                    startActivityForResult(intent, PLACE_PICKER_REQUEST);
+
+                } catch (GooglePlayServicesRepairableException e) {
+                    e.printStackTrace();
+                } catch (GooglePlayServicesNotAvailableException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode,
+                                    int resultCode, Intent data) {
+
+        if (requestCode == PLACE_PICKER_REQUEST
+                && resultCode == Activity.RESULT_OK) {
+
+            final Place place = PlacePicker.getPlace(data, this);
+            final CharSequence name = place.getName();
+            final CharSequence address = place.getAddress();
+            String attributions = PlacePicker.getAttributions(data);
+            if (attributions == null) {
+                attributions = "";
+            }
+        } else {
+            super.onActivityResult(requestCode, resultCode, data);
+        }
     }
 
     @Override
@@ -63,6 +158,7 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
         // 連線到Google API用戶端
         if (!googleApiClient.isConnected()) {
             googleApiClient.connect();
+
         }
     }
 
@@ -178,6 +274,11 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
         // ConnectionResult參數是連線失敗的資訊
         int errorCode = connectionResult.getErrorCode();
 
+        // TODO(Developer): Check error code and notify the user of error state and resolution.
+        Toast.makeText(this,
+                "Could not connect to Google API Client: Error " + connectionResult.getErrorCode(),
+                Toast.LENGTH_SHORT).show();
+
         // 裝置沒有安裝Google Play服務
         if (errorCode == ConnectionResult.SERVICE_MISSING) {
             Toast.makeText(this, "No Google Play Service.",
@@ -197,8 +298,7 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
         // 設定目前位置的標記
         if (currentMarker == null) {
             currentMarker = mMap.addMarker(new MarkerOptions().position(latLng));
-        }
-        else {
+        } else {
             currentMarker.setPosition(latLng);
         }
 
@@ -212,6 +312,7 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
                 .addConnectionCallbacks(this)
                 .addOnConnectionFailedListener(this)
                 .addApi(LocationServices.API)
+                .addApi(Places.GEO_DATA_API)
                 .build();
     }
 
@@ -225,4 +326,5 @@ public class MapsActivity extends FragmentActivity implements GoogleApiClient.Co
         // 設定優先讀取高精確度的位置資訊（GPS）
         locationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);
     }
+
 }
